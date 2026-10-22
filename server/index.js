@@ -18,13 +18,30 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 
 const app = express();
-app.use(cors());
+const allowedOrigin = process.env.CORS_ORIGIN || process.env.FRONTEND_URL;
+app.use(cors({
+  origin: allowedOrigin ? allowedOrigin.split(",").map(o => o.trim()) : true,
+  credentials: true
+}));
 app.use(express.json({ limit: "1mb" }));
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const safeUser = u => ({ id: u._id, userId: u.userId, name: u.name, email: u.email, role: u.role, pharmacyId: u.pharmacyId });
 const tokenFor = u => jwt.sign({ id: u._id }, process.env.JWT_SECRET || "development-only-secret", { expiresIn: "12h" });
 
-app.get("/api/health", (req, res) => res.json({ ok: true, app: "MedMap API" }));
+app.get("/api/health", (req, res) => {
+  const isConnected = mongoose.connection.readyState === 1;
+  res.json({
+    ok: true,
+    app: "MedMap API",
+    database: {
+      connected: isConnected,
+      readyState: mongoose.connection.readyState,
+      mode: isConnected ? "MongoDB Atlas" : "In-Memory",
+      host: isConnected ? mongoose.connection.host : null,
+      name: isConnected ? mongoose.connection.name : null
+    }
+  });
+});
 
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const { loginId, password } = req.body;
@@ -164,50 +181,56 @@ app.patch("/api/orders/:id/status", protect, allow("admin", "pharmacist"), async
 }));
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error("[MedMap Server Error]:", err.message || err);
   if (err?.name === "MongooseError" || err?.name === "MongoNetworkError" || err?.message?.includes("buffering timed out")) {
-    console.warn("[AI Studio] Database offline or timed out:", err.message);
-    if (req.method === "GET") {
-      return res.json(req.path.endsWith("s") || req.path.endsWith("s/") ? [] : {});
-    }
-    return res.status(503).json({ message: "Database temporarily unavailable." });
+    return res.status(503).json({
+      message: "Database connection unavailable. Please verify MONGODB_URI and MongoDB Atlas network access."
+    });
   }
   if (err?.code === 11000) return res.status(409).json({ message: "This record already exists." });
   if (err?.name === "CastError") return res.status(400).json({ message: "Invalid record ID." });
-  res.status(500).json({ message: "Server error. Check the server terminal for details." });
+  res.status(500).json({ message: err.message || "Internal server error." });
 });
 
-let databaseReady;
+let databaseReady = null;
 export async function ensureDatabase() {
+  if (mongoose.connection.readyState === 1) return mongoose.connection;
   if (databaseReady) return databaseReady;
+
   databaseReady = (async () => {
     const uri = process.env.MONGODB_URI;
-    if (uri && !uri.startsWith("mongodb://localhost")) {
-      try {
-        mongoose.set("bufferCommands", false);
-        const connectOpts = { serverSelectionTimeoutMS: 8000 };
-        const pathPart = uri.split("?")[0].replace(/^mongodb(\+srv)?:\/\/[^/]+\/?/, "").trim();
-        if (!pathPart) connectOpts.dbName = "medmap";
-        await mongoose.connect(uri, connectOpts);
-        console.log("MongoDB connected successfully to:", mongoose.connection.name || "medmap");
-      } catch (err) {
-        console.warn("MongoDB connection failed, falling back to in-memory store:", err.message);
-      }
-    } else {
-      console.log("Running MedMap with in-memory store (standalone mode).");
+    if (!uri) {
+      console.warn("[MedMap] Warning: MONGODB_URI is not set in environment variables.");
+      return;
     }
+    const sanitized = uri.replace(/:([^:@]+)@/, ":****@");
+    console.log(`[MedMap] Connecting to MongoDB Atlas: ${sanitized.split("@")[1] || "cluster"}...`);
+    mongoose.set("bufferCommands", false);
+    const connectOpts = { serverSelectionTimeoutMS: 10000 };
+    const pathPart = uri.split("?")[0].replace(/^mongodb(\+srv)?:\/\/[^/]+\/?/, "").trim();
+    if (!pathPart) connectOpts.dbName = "medmap";
+
     try {
+      await mongoose.connect(uri, connectOpts);
+      console.log(`[MedMap] MongoDB connected successfully to database: ${mongoose.connection.name}`);
       await seedDefaults();
-      console.log("MedMap demo database seeded successfully.");
+      console.log("[MedMap] Database seed check completed.");
     } catch (err) {
-      console.warn("Demo seeding error:", err.message);
+      console.error("[MedMap] MongoDB Atlas connection error:", err.message);
+      databaseReady = null;
+      throw err;
     }
   })();
+
   return databaseReady;
 }
 
 export async function createFullApp() {
-  await ensureDatabase();
+  try {
+    await ensureDatabase();
+  } catch (err) {
+    console.warn("[MedMap] Initial database connection attempt failed; will retry on incoming API requests:", err.message);
+  }
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

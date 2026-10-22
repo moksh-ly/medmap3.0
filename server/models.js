@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import { inMemDb } from "./inMemoryDb.js";
 
 const userSchema = new mongoose.Schema({
   userId: { type: String, unique: true, sparse: true },
@@ -49,33 +48,8 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ["Cash on delivery", "UPI at pharmacy", "Card at pharmacy"], required: true }
 }, { timestamps: true });
 
-const MongoUser = mongoose.models.User || mongoose.model("User", userSchema);
-const MongoPharmacy = mongoose.models.Pharmacy || mongoose.model("Pharmacy", pharmacySchema);
-const MongoMedicine = mongoose.models.Medicine || mongoose.model("Medicine", medicineSchema);
-const MongoStock = mongoose.models.Stock || mongoose.model("Stock", stockSchema);
-const MongoOrder = mongoose.models.Order || mongoose.model("Order", orderSchema);
-
-export const isMongoConnected = () => mongoose.connection.readyState === 1;
-
-function createModelProxy(mongoModel, inMemCollection) {
-  return new Proxy(mongoModel, {
-    get(target, prop) {
-      if (isMongoConnected()) {
-        const val = target[prop];
-        return typeof val === "function" ? val.bind(target) : val;
-      }
-      if (prop in inMemCollection) {
-        const val = inMemCollection[prop];
-        return typeof val === "function" ? val.bind(inMemCollection) : val;
-      }
-      const val = target[prop];
-      return typeof val === "function" ? val.bind(target) : val;
-    }
-  });
-}
-
-export const User = createModelProxy(MongoUser, inMemDb.users);
-export const Pharmacy = createModelProxy(MongoPharmacy, inMemDb.pharmacies);
-export const Medicine = createModelProxy(MongoMedicine, inMemDb.medicines);
-export const Stock = createModelProxy(MongoStock, inMemDb.stocks);
-export const Order = createModelProxy(MongoOrder, inMemDb.orders);
+export const User = mongoose.models.User || mongoose.model("User", userSchema);
+export const Pharmacy = mongoose.models.Pharmacy || mongoose.model("Pharmacy", pharmacySchema);
+export const Medicine = mongoose.models.Medicine || mongoose.model("Medicine", medicineSchema);
+export const Stock = mongoose.models.Stock || mongoose.model("Stock", stockSchema);
+export const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
