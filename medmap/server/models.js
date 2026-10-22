@@ -42,8 +42,10 @@ const orderSchema = new mongoose.Schema({
   items: [{ medicineId: { type: mongoose.Schema.Types.ObjectId, ref: "Medicine" }, name: String, quantity: Number, price: Number }],
   total: { type: Number, required: true },
   status: { type: String, enum: ["Placed", "Accepted", "Ready", "Completed", "Cancelled"], default: "Placed" },
-  patientName: String,
-  patientPhone: String
+  patientName: { type: String, required: true },
+  patientPhone: { type: String, required: true },
+  deliveryAddress: { type: String, required: true },
+  paymentMethod: { type: String, enum: ["Cash on delivery", "UPI at pharmacy", "Card at pharmacy"], required: true }
 }, { timestamps: true });
 
 export const User = mongoose.model("User", userSchema);

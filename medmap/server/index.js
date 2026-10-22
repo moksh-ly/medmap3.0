@@ -111,8 +111,11 @@ app.delete("/api/stock/:id", protect, allow("admin", "pharmacist"), asyncRoute(a
 }));
 
 app.post("/api/orders", protect, allow("patient"), asyncRoute(async (req, res) => {
-  const { pharmacyId, items, patientPhone } = req.body;
+  const { pharmacyId, items, patientName, patientPhone, deliveryAddress, paymentMethod } = req.body;
   if (!pharmacyId || !Array.isArray(items) || !items.length) return res.status(400).json({ message: "Select a pharmacy and at least one medicine." });
+  if (!String(patientName || "").trim() || !String(patientPhone || "").trim() || !String(deliveryAddress || "").trim()) return res.status(400).json({ message: "Full name, phone number and delivery address are required." });
+  if (!/^[0-9+()\- ]{10,16}$/.test(String(patientPhone).trim())) return res.status(400).json({ message: "Enter a valid contact phone number." });
+  if (!["Cash on delivery", "UPI at pharmacy", "Card at pharmacy"].includes(paymentMethod)) return res.status(400).json({ message: "Select a valid payment method." });
   const pharmacy = await Pharmacy.findOne({ _id: pharmacyId, active: true });
   if (!pharmacy) return res.status(404).json({ message: "Selected pharmacy is not available." });
   const finalItems = []; let total = 0;
@@ -130,7 +133,7 @@ app.post("/api/orders", protect, allow("patient"), asyncRoute(async (req, res) =
     const result = await Stock.updateOne({ pharmacyId, medicineId: item.medicineId, quantity: { $gte: item.quantity } }, { $inc: { quantity: -item.quantity } });
     if (!result.modifiedCount) return res.status(409).json({ message: "Stock changed while placing your order. Refresh and try again." });
   }
-  const order = await Order.create({ patientId: req.user._id, pharmacyId, pharmacistId: pharmacy.pharmacistId, items: finalItems, total, patientName: req.user.name, patientPhone: patientPhone || "" });
+  const order = await Order.create({ patientId: req.user._id, pharmacyId, pharmacistId: pharmacy.pharmacistId, items: finalItems, total, patientName: String(patientName).trim(), patientPhone: String(patientPhone).trim(), deliveryAddress: String(deliveryAddress).trim(), paymentMethod });
   res.status(201).json(await order.populate(["pharmacyId", "pharmacistId"]));
 }));
 app.get("/api/orders/mine", protect, allow("patient"), asyncRoute(async (req, res) => {
@@ -158,13 +161,33 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: "Server error. Check the server terminal for details." });
 });
 
-const port = process.env.PORT || 5000;
-try {
-  await mongoose.connect(process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/medmap");
-  console.log("MongoDB connected.");
-  await seedDefaults();
-  app.listen(port, () => console.log(`MedMap API running on http://localhost:${port}`));
-} catch (err) {
-  console.error("Could not connect to MongoDB:", err.message);
-  process.exit(1);
+let databaseReady;
+export async function ensureDatabase() {
+  if (mongoose.connection.readyState === 1) return;
+  if (!databaseReady) {
+    databaseReady = (async () => {
+      const uri = process.env.MONGODB_URI;
+      if (!uri) throw new Error("MONGODB_URI is not configured. Add it in your deployment environment variables.");
+      await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
+      await seedDefaults();
+      console.log("MongoDB connected and demo data checked.");
+    })().catch(err => {
+      databaseReady = undefined;
+      throw err;
+    });
+  }
+  await databaseReady;
+}
+
+export default app;
+
+// Local development entry point. Vercel imports the Express app through api/[...path].js.
+if (process.env.VERCEL !== "1") {
+  const port = process.env.PORT || 5000;
+  ensureDatabase()
+    .then(() => app.listen(port, () => console.log(`MedMap API running on http://localhost:${port}`)))
+    .catch(err => {
+      console.error("Could not connect to MongoDB:", err.message);
+      process.exit(1);
+    });
 }
