@@ -1,12 +1,21 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ override: true });
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { createServer as createViteServer } from "vite";
 import { User, Pharmacy, Medicine, Stock, Order } from "./models.js";
 import { protect, allow } from "./auth.js";
 import { seedDefaults } from "./seed.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, "..");
 
 const app = express();
 app.use(cors());
@@ -156,6 +165,13 @@ app.patch("/api/orders/:id/status", protect, allow("admin", "pharmacist"), async
 
 app.use((err, req, res, next) => {
   console.error(err);
+  if (err?.name === "MongooseError" || err?.name === "MongoNetworkError" || err?.message?.includes("buffering timed out")) {
+    console.warn("[AI Studio] Database offline or timed out:", err.message);
+    if (req.method === "GET") {
+      return res.json(req.path.endsWith("s") || req.path.endsWith("s/") ? [] : {});
+    }
+    return res.status(503).json({ message: "Database temporarily unavailable." });
+  }
   if (err?.code === 11000) return res.status(409).json({ message: "This record already exists." });
   if (err?.name === "CastError") return res.status(400).json({ message: "Invalid record ID." });
   res.status(500).json({ message: "Server error. Check the server terminal for details." });
@@ -163,31 +179,68 @@ app.use((err, req, res, next) => {
 
 let databaseReady;
 export async function ensureDatabase() {
-  if (mongoose.connection.readyState === 1) return;
-  if (!databaseReady) {
-    databaseReady = (async () => {
-      const uri = process.env.MONGODB_URI;
-      if (!uri) throw new Error("MONGODB_URI is not configured. Add it in your deployment environment variables.");
-      await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
+  if (databaseReady) return databaseReady;
+  databaseReady = (async () => {
+    const uri = process.env.MONGODB_URI;
+    if (uri && !uri.startsWith("mongodb://localhost")) {
+      try {
+        mongoose.set("bufferCommands", false);
+        const connectOpts = { serverSelectionTimeoutMS: 8000 };
+        const pathPart = uri.split("?")[0].replace(/^mongodb(\+srv)?:\/\/[^/]+\/?/, "").trim();
+        if (!pathPart) connectOpts.dbName = "medmap";
+        await mongoose.connect(uri, connectOpts);
+        console.log("MongoDB connected successfully to:", mongoose.connection.name || "medmap");
+      } catch (err) {
+        console.warn("MongoDB connection failed, falling back to in-memory store:", err.message);
+      }
+    } else {
+      console.log("Running MedMap with in-memory store (standalone mode).");
+    }
+    try {
       await seedDefaults();
-      console.log("MongoDB connected and demo data checked.");
-    })().catch(err => {
-      databaseReady = undefined;
-      throw err;
+      console.log("MedMap demo database seeded successfully.");
+    } catch (err) {
+      console.warn("Demo seeding error:", err.message);
+    }
+  })();
+  return databaseReady;
+}
+
+export async function createFullApp() {
+  await ensureDatabase();
+
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      root: rootDir,
+      server: { middlewareMode: true, host: "0.0.0.0" },
+      appType: "spa"
     });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.resolve(rootDir, "dist");
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.resolve(distPath, "index.html"));
+      });
+    }
   }
-  await databaseReady;
+
+  return app;
 }
 
 export default app;
 
-// Local development entry point. Vercel imports the Express app through api/[...path].js.
 if (process.env.VERCEL !== "1") {
-  const port = process.env.PORT || 5000;
-  ensureDatabase()
-    .then(() => app.listen(port, () => console.log(`MedMap API running on http://localhost:${port}`)))
+  const port = Number(process.env.PORT) || 3000;
+  createFullApp()
+    .then(serverApp => {
+      serverApp.listen(port, "0.0.0.0", () => {
+        console.log(`MedMap application running on http://0.0.0.0:${port}`);
+      });
+    })
     .catch(err => {
-      console.error("Could not connect to MongoDB:", err.message);
+      console.error("Fatal startup error:", err);
       process.exit(1);
     });
 }

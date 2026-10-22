@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- Character Set and Viewport -->
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+
+    <!-- Application Title -->
+    <title>MedMap</title>
+
+    <!-- Meta Description and SEO Information -->
+    <meta name="description" content="Find medicines nearby, check live inventory, and place pharmacy orders." />
+    <meta name="keywords" content="pharmacy, medicines, prescription, healthcare, pharmacy inventory, local chemist, medicine locator" />
+    <meta name="author" content="MedMap Healthcare Systems" />
+    <meta name="application-name" content="MedMap" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Mobile Theme and App Configuration -->
+    <meta name="theme-color" content="#0c3b35" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="MedMap" />
+
+    <!-- Open Graph (Facebook, LinkedIn, Discord preview) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="MedMap" />
+    <meta property="og:description" content="Find medicines nearby, check live inventory, and place pharmacy orders." />
+    <meta property="og:site_name" content="MedMap" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="MedMap" />
+    <meta name="twitter:description" content="Find medicines nearby, check live inventory, and place pharmacy orders." />
+
+    <!-- Favicon using Inline SVG Medicine Cross Icon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%230c3b35'><rect width='24' height='24' rx='6' fill='%230c3b35'/><path d='M10 5h4v5h5v4h-5v5h-4v-5H5v-4h5z' fill='%23c8ee85'/></svg>" />
+
+    <!-- Google Fonts Preconnect and Stylesheets -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Manrope:wght@300;400;500;600;700;800&display=swap" />
+  </head>
+  <body>
+    <!-- Fallback message for users with JavaScript disabled -->
+    <noscript>
+      <div style="padding: 2rem; max-width: 600px; margin: 3rem auto; font-family: sans-serif; text-align: center; background: #fff0ec; border-radius: 12px; border: 1px solid #ffd4cb; color: #a53b28;">
+        <h2>JavaScript Required</h2>
+        <p>MedMap requires JavaScript to display interactive pharmacy listings, real-time medicine availability, and online ordering.</p>
+        <p>Please enable JavaScript in your browser settings to continue.</p>
+      </div>
+    </noscript>
+
+    <!-- Main React Application Mount Point -->
+    <div id="root"></div>
+
+    <!-- Application Script Entry Point -->
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
