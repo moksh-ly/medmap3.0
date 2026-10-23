@@ -259,7 +259,15 @@ export async function createFullApp() {
 export default app;
 
 if (process.env.VERCEL !== "1") {
-  const port = Number(process.env.PORT) || 3000;
+  let port = Number(process.env.PORT);
+  if (!port || Number.isNaN(port)) {
+    const portArgIndex = process.argv.indexOf("--port");
+    if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+      port = Number(process.argv[portArgIndex + 1]);
+    }
+  }
+  if (!port || Number.isNaN(port)) port = 3000;
+
   createFullApp()
     .then(serverApp => {
       serverApp.listen(port, "0.0.0.0", () => {
