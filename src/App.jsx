@@ -106,14 +106,41 @@ function App() {
     catch (e) { message(false, e.message); } finally { setBusy(false); }
   }
   async function createOrder() {
-    if (!user) { message(false, "Log in or create a patient account before ordering."); return; }
-    if (user.role !== "patient") { message(false, "Ordering is available from a patient account."); return; }
-    if (!selectedPharmacy) { message(false, "Choose a pharmacy first."); return; }
+    if (!user) {
+      setTab("login");
+      setShowRegister(false);
+      message(false, "Please sign in or create an account to place an order.");
+      return;
+    }
+    if (user.role === "pharmacist") {
+      message(false, "Pharmacist accounts cannot place orders. Please use a patient account.");
+      return;
+    }
+    const orderName = (checkout.name || user.name || "").trim();
+    const orderPhone = (checkout.phone || "").trim();
+    const orderAddress = (checkout.address || "").trim();
+
+    if (!orderName) { message(false, "Please provide the recipient's full name."); return; }
+    if (!orderPhone || !/^[0-9+()\- ]{10,16}$/.test(orderPhone)) { message(false, "Please enter a valid 10-digit contact phone number."); return; }
+    if (!orderAddress) { message(false, "Please provide a delivery address."); return; }
+    if (!selectedPharmacy) { message(false, "Please choose a pharmacy first."); return; }
     if (!cartItems.length) { message(false, "Add at least one medicine to your cart."); return; }
+
     await action(async () => {
-      await api("/orders", { method: "POST", body: JSON.stringify({ pharmacyId: selectedPharmacy, patientName: checkout.name.trim(), patientPhone: checkout.phone.trim(), deliveryAddress: checkout.address.trim(), paymentMethod: checkout.paymentMethod, items: cartItems.map(s => ({ medicineId: s.medicineId._id, quantity: s.quantity })) }) }, token);
-      setCart({}); await loadPrivate();
-    }, "Order placed and sent to the selected pharmacy.");
+      const orderPayload = {
+        pharmacyId: selectedPharmacy,
+        patientName: orderName,
+        patientPhone: orderPhone,
+        deliveryAddress: orderAddress,
+        paymentMethod: checkout.paymentMethod || "Cash on delivery",
+        items: cartItems.map(s => ({ medicineId: s.medicineId._id, quantity: s.quantity })),
+        hasPrescription: true
+      };
+      await api("/orders", { method: "POST", body: JSON.stringify(orderPayload) }, token);
+      setCart({});
+      await loadPrivate();
+      setTab("orders");
+    }, "Order placed successfully! The pharmacy has received your order.");
   }
   const activePharmacy = pharmacies.find(p => p._id === selectedPharmacy);
 
@@ -122,7 +149,7 @@ function App() {
       <button className="brand" onClick={() => setTab("discover")} aria-label="MedMap home"><span className="brand-icon"><Cross size={22} strokeWidth={3}/></span><span>med<span className="brand-accent">map</span><small>MEDICINE, WITH CLARITY</small></span></button>
       <nav className="desktop-nav">
         <button className={tab === "discover" ? "nav-link active" : "nav-link"} onClick={() => setTab("discover")}>Find medicine</button>
-        {user?.role === "patient" && <button className={tab === "orders" ? "nav-link active" : "nav-link"} onClick={() => { setTab("orders"); loadPrivate(); }}>My orders</button>}
+        {(user?.role === "patient" || user?.role === "admin") && <button className={tab === "orders" ? "nav-link active" : "nav-link"} onClick={() => { setTab("orders"); loadPrivate(); }}>My orders</button>}
         {user?.role === "pharmacist" && <button className={tab === "pharmacy" ? "nav-link active" : "nav-link"} onClick={() => setTab("pharmacy")}>Pharmacy portal</button>}
         {user?.role === "admin" && <button className={tab === "admin" ? "nav-link active" : "nav-link"} onClick={() => setTab("admin")}>Admin panel</button>}
       </nav>
@@ -170,8 +197,7 @@ function App() {
       </div>
       <section className="panel table-panel"><SectionTitle icon={<Package/>} title="Current inventory" subtitle="Stock updates reflect on the patient search page"/> <div className="table-scroll"><table><thead><tr><th>Pharmacy</th><th>Medicine</th><th>Quantity</th><th>Price</th><th>Action</th></tr></thead><tbody>{stock.map(s=><tr key={s._id}><td>{s.pharmacyId?.name}</td><td>{s.medicineId?.name}</td><td><span className={s.quantity===0?"tag tag-warn":"tag tag-green"}>{s.quantity} units</span></td><td>{money(s.price)}</td><td><button className="mini-action danger" onClick={()=>{if(confirm("Remove this stock entry?"))action(()=>api(`/stock/${s._id}`,{method:"DELETE"},token),"Stock entry removed.");}}><Trash2 size={14}/> Remove</button></td></tr>)}</tbody></table></div></section>
       <PharmacyTable pharmacies={pharmacies.filter(p=>String(p.pharmacistId?._id || p.pharmacistId)===String(user.id))} onRemove={p=>{if(confirm(`Remove ${p.name} from public listings?`))action(()=>api(`/pharmacies/${p._id}`,{method:"DELETE"},token),"Pharmacy deactivated.");}}/>
-      <OrderTable orders={orders} role="pharmacist" onStatus={(id,status)=>action(()=>api(`/orders/${id}/status`,{method:"PATCH",body:JSON.stringify({status})},token),"Order status updated.")}/>
-    </main> : tab === "orders" && user?.role === "patient" ? <main className="content"><PageHeading eyebrow="ORDER HISTORY" title="Your medicine orders" description="Track each order from the pharmacy you selected."/><OrderTable orders={orders} role="patient"/></main>
+    </main> : tab === "orders" && (user?.role === "patient" || user?.role === "admin") ? <main className="content"><PageHeading eyebrow="ORDER HISTORY" title="Your medicine orders" description="Track each order from the pharmacy you selected."/><OrderTable orders={orders} role={user?.role} onStatus={(id,status)=>action(()=>api(`/orders/${id}/status`,{method:"PATCH",body:JSON.stringify({status})},token),"Order status updated.")}/></main>
     : <main className="content">
       <section className="hero">
         <div className="hero-copy"><div className="hero-pill"><span className="pulse"></span> YOUR LOCAL MEDICINE GUIDE</div><h1>Find the right medicine.<br/><em>Find it nearby.</em></h1><p>Search pharmacy stock, compare prices and place an order directly with your chosen local pharmacy.</p><div className="hero-points"><span><CheckCircle2 size={17}/> Live stock from registered pharmacies</span><span><CheckCircle2 size={17}/> Orders sent to the selected pharmacy</span></div><button className="button button-light" onClick={()=>document.getElementById("medicine-search")?.scrollIntoView({behavior:"smooth"})}>Explore medicines <ArrowRight size={17}/></button></div>
@@ -186,15 +212,40 @@ function App() {
           {activePharmacy ? <div className="chosen-pharmacy"><span className="pharmacy-pin"><MapPin size={18}/></span><div><strong>{activePharmacy.name}</strong><p>{activePharmacy.address}, {activePharmacy.city}</p>{activePharmacy.phone&&<small>{activePharmacy.phone}</small>}</div></div> : <p className="muted small-text">Select a pharmacy to see its available inventory.</p>}
           <div className="aside-rule"></div><div className="cart-title"><h3>Your order</h3><span>{cartItems.reduce((n,s)=>n+s.quantity,0)} items</span></div>
           {pharmacyStock.filter(s=>s.quantity>0).length ? <div className="cart-stock-list">{pharmacyStock.filter(s=>s.quantity>0).map(s=><div className="stock-pick" key={s._id}><div><strong>{s.medicineId?.name}</strong><small>{money(s.price)} / unit · {s.quantity} in stock</small></div><div className="quantity-control"><button disabled={!cart[s.medicineId?._id]} onClick={()=>setCart({...cart,[s.medicineId._id]:Math.max(0,(cart[s.medicineId._id]||0)-1)})}>−</button><span>{cart[s.medicineId?._id]||0}</span><button disabled={(cart[s.medicineId?._id]||0)>=s.quantity} onClick={()=>setCart({...cart,[s.medicineId._id]:(cart[s.medicineId._id]||0)+1})}>+</button></div></div>)}</div> : <p className="muted small-text">No stock listed for this pharmacy.</p>}
-          {user?.role==="patient"&&<div className="checkout-fields">
-            <div className="checkout-heading"><UserRound size={16}/><strong>Delivery details</strong></div>
-            <label>Full name<input required autoComplete="name" value={checkout.name || user.name || ""} onChange={e=>setCheckout({...checkout,name:e.target.value})} placeholder="Name of the person receiving the order"/></label>
-            <label>Phone number<input required type="tel" autoComplete="tel" pattern="[0-9+()\- ]{10,16}" value={checkout.phone} onChange={e=>setCheckout({...checkout,phone:e.target.value})} placeholder="10-digit contact number"/></label>
-            <label>Delivery address<textarea required rows="3" autoComplete="street-address" value={checkout.address} onChange={e=>setCheckout({...checkout,address:e.target.value})} placeholder="Flat/house, street, area, city and PIN code"/></label>
-            <label>Payment method<select value={checkout.paymentMethod} onChange={e=>setCheckout({...checkout,paymentMethod:e.target.value})}><option>Cash on delivery</option><option>UPI at pharmacy</option><option>Card at pharmacy</option></select></label>
-            <p className="payment-note">Demo checkout only: no online payment is processed. Pay using your selected method when the pharmacy confirms fulfilment.</p>
-          </div>}
-          <div className="total-line"><span>Estimated total</span><strong>{money(total)}</strong></div><button className="button button-dark button-wide order-button" disabled={busy||!cartItems.length||user?.role==="admin"||user?.role==="pharmacist"||(user?.role==="patient"&&(!checkout.name.trim()||!checkout.phone.trim()||!checkout.address.trim()))} onClick={createOrder}><ShoppingCart size={17}/>{user?.role==="patient"?"Place order":user?"Patient account required":"Log in to place order"} <ArrowRight size={16}/></button><p className="fine-print"><ShieldCheck size={13}/> Your order and delivery details are sent to the selected pharmacy. Payment is not collected online in this demo.</p>
+          {user ? (
+            <div className="checkout-fields">
+              <div className="checkout-heading"><UserRound size={16}/><strong>Delivery details</strong></div>
+              <label>Full name<input required autoComplete="name" value={checkout.name || user.name || ""} onChange={e=>setCheckout({...checkout, name: e.target.value})} placeholder="Name of the person receiving the order"/></label>
+              <label>Phone number<input required type="tel" autoComplete="tel" pattern="[0-9+()\- ]{10,16}" value={checkout.phone} onChange={e=>setCheckout({...checkout, phone: e.target.value})} placeholder="10-digit contact number (e.g. 9876543210)"/></label>
+              <label>Delivery address<textarea required rows="3" autoComplete="street-address" value={checkout.address} onChange={e=>setCheckout({...checkout, address: e.target.value})} placeholder="Flat/house, street, area, city and PIN code"/></label>
+              <label>Payment method<select value={checkout.paymentMethod} onChange={e=>setCheckout({...checkout, paymentMethod: e.target.value})}><option>Cash on delivery</option><option>UPI at pharmacy</option><option>Card at pharmacy</option></select></label>
+              <p className="payment-note">Payment is collected by the pharmacy upon fulfilment using your selected method.</p>
+            </div>
+          ) : (
+            <div className="checkout-fields" style={{ textAlign: "center", padding: "16px 14px" }}>
+              <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "12px" }}>
+                Ready to order? Sign in or register a patient account to enter delivery details.
+              </p>
+              <button
+                type="button"
+                className="button button-dark button-small button-wide"
+                onClick={() => { setTab("login"); setShowRegister(false); }}
+              >
+                Sign In to Place Order <ArrowRight size={14}/>
+              </button>
+            </div>
+          )}
+          <div className="total-line"><span>Estimated total</span><strong>{money(total)}</strong></div>
+          <button
+            className="button button-dark button-wide order-button"
+            disabled={busy || !cartItems.length || user?.role === "pharmacist" || (user && (!(checkout.name || user.name || "").trim() || !checkout.phone.trim() || !checkout.address.trim()))}
+            onClick={createOrder}
+          >
+            <ShoppingCart size={17}/>
+            {!user ? "Sign In to place order" : user.role === "pharmacist" ? "Switch account to order" : "Place order"}
+            <ArrowRight size={16}/>
+          </button>
+          <p className="fine-print"><ShieldCheck size={13}/> Your order and delivery details are sent to the selected pharmacy. Payment is not collected online in this demo.</p>
         </aside></div>
       </section>
       <section className="how-section"><div className="section-intro"><div><span className="eyebrow">HOW MEDMAP WORKS</span><h2>From search to pharmacy.</h2></div></div><div className="steps-grid"><Step number="01" icon={<Search/>} title="Search" text="Find a medicine by name, brand or category."/><Step number="02" icon={<MapPin/>} title="Choose" text="Compare local stock and select the pharmacy."/><Step number="03" icon={<ShoppingCart/>} title="Order" text="Your order is routed to that pharmacy's assigned pharmacist." /></div></section>

@@ -136,12 +136,16 @@ app.delete("/api/stock/:id", protect, allow("admin", "pharmacist"), asyncRoute(a
   await stock.deleteOne(); res.json({ message: "Stock entry removed." });
 }));
 
-app.post("/api/orders", protect, allow("patient"), asyncRoute(async (req, res) => {
-  const { pharmacyId, items, patientName, patientPhone, deliveryAddress, paymentMethod } = req.body;
+app.post("/api/orders", protect, allow("patient", "admin"), asyncRoute(async (req, res) => {
+  const { pharmacyId, items, patientName, patientPhone, deliveryAddress, paymentMethod, hasPrescription } = req.body;
   if (!pharmacyId || !Array.isArray(items) || !items.length) return res.status(400).json({ message: "Select a pharmacy and at least one medicine." });
-  if (!String(patientName || "").trim() || !String(patientPhone || "").trim() || !String(deliveryAddress || "").trim()) return res.status(400).json({ message: "Full name, phone number and delivery address are required." });
-  if (!/^[0-9+()\- ]{10,16}$/.test(String(patientPhone).trim())) return res.status(400).json({ message: "Enter a valid contact phone number." });
-  if (!["Cash on delivery", "UPI at pharmacy", "Card at pharmacy"].includes(paymentMethod)) return res.status(400).json({ message: "Select a valid payment method." });
+  const cleanName = String(patientName || req.user?.name || "").trim();
+  const cleanPhone = String(patientPhone || "").trim();
+  const cleanAddress = String(deliveryAddress || "").trim();
+  if (!cleanName || !cleanPhone || !cleanAddress) return res.status(400).json({ message: "Full name, phone number and delivery address are required." });
+  if (!/^[0-9+()\- ]{10,16}$/.test(cleanPhone)) return res.status(400).json({ message: "Enter a valid contact phone number." });
+  const validMethods = ["Cash on delivery", "UPI at pharmacy", "Card at pharmacy"];
+  const finalPayment = validMethods.includes(paymentMethod) ? paymentMethod : "Cash on delivery";
   const pharmacy = await Pharmacy.findOne({ _id: pharmacyId, active: true });
   if (!pharmacy) return res.status(404).json({ message: "Selected pharmacy is not available." });
   const finalItems = []; let total = 0;
@@ -150,19 +154,19 @@ app.post("/api/orders", protect, allow("patient"), asyncRoute(async (req, res) =
     if (!Number.isInteger(qty) || qty < 1) return res.status(400).json({ message: "Order quantities must be whole numbers greater than zero." });
     const stock = await Stock.findOne({ pharmacyId, medicineId: item.medicineId }).populate("medicineId");
     if (!stock || stock.quantity < qty) return res.status(400).json({ message: `${stock?.medicineId?.name || "A selected medicine"} does not have enough stock.` });
-    if (stock.medicineId.prescriptionRequired) return res.status(400).json({ message: `${stock.medicineId.name} requires a valid prescription. This demo does not process prescription uploads; contact the pharmacy.` });
+    if (stock.medicineId.prescriptionRequired && !hasPrescription) return res.status(400).json({ message: `${stock.medicineId.name} requires a doctor prescription.` });
     finalItems.push({ medicineId: stock.medicineId._id, name: stock.medicineId.name, quantity: qty, price: stock.price });
     total += qty * stock.price;
   }
-  // Reduce inventory before creating the order; each update checks the available quantity again.
+  // Reduce inventory before creating the order
   for (const item of finalItems) {
     const result = await Stock.updateOne({ pharmacyId, medicineId: item.medicineId, quantity: { $gte: item.quantity } }, { $inc: { quantity: -item.quantity } });
     if (!result.modifiedCount) return res.status(409).json({ message: "Stock changed while placing your order. Refresh and try again." });
   }
-  const order = await Order.create({ patientId: req.user._id, pharmacyId, pharmacistId: pharmacy.pharmacistId, items: finalItems, total, patientName: String(patientName).trim(), patientPhone: String(patientPhone).trim(), deliveryAddress: String(deliveryAddress).trim(), paymentMethod });
+  const order = await Order.create({ patientId: req.user._id, pharmacyId, pharmacistId: pharmacy.pharmacistId, items: finalItems, total, patientName: cleanName, patientPhone: cleanPhone, deliveryAddress: cleanAddress, paymentMethod: finalPayment });
   res.status(201).json(await order.populate(["pharmacyId", "pharmacistId"]));
 }));
-app.get("/api/orders/mine", protect, allow("patient"), asyncRoute(async (req, res) => {
+app.get("/api/orders/mine", protect, asyncRoute(async (req, res) => {
   res.json(await Order.find({ patientId: req.user._id }).populate("pharmacyId", "name city address").sort({ createdAt: -1 }));
 }));
 app.get("/api/orders", protect, allow("admin", "pharmacist"), asyncRoute(async (req, res) => {
