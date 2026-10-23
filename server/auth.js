@@ -35,7 +35,7 @@ export async function protect(req, res, next) {
  */
 export const allow = (...roles) => (req, res, next) => {
   if (!req.user || !roles.includes(req.user.role)) {
-    return res.status(403).json({ message: "You do not have permission for this action." });
+    return res.status(403).json({ message: "You don't have permission for this action." });
   }
   next();
 };
